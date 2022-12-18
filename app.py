@@ -2,6 +2,12 @@ from flask import Flask, jsonify, request
 from db import session, Cliente
 from db import Produto, Carrinho, Venda
 
+from kafka import KafkaConsumer, KafkaProducer
+
+producer = KafkaProducer(bootstrap_servers=['localhost:9092'],
+              api_version=(0,11,5),
+              value_serializer=lambda x: dumps(x).encode('utf-8'))
+
 app = Flask(__name__)
 
 
@@ -152,9 +158,9 @@ def carrinho(id_carrinho=None):
         return "", 200
     elif request.method == "PUT":
         carrinho = request.json
-        produto = session.query(Produto).filter(Produto.id == carrinho["produto_id"]).first()
+        produto = session.query(Produto).filter(Produto.id == carrinho["produto_id"]).one()
         session.query(Carrinho).filter(Carrinho.id == id_carrinho).update({
-            "preco": produto['preco'],
+            "preco": produto.preco,
             "qtd": carrinho["qtd"],
             "produto_id": carrinho["produto_id"]
         })
@@ -208,6 +214,24 @@ def venda(id_venda=None):
             )
         )
         session.commit()
+        '''consumer = KafkaConsumer(
+            client_id="client1",
+            group_id="venda-consumer",
+            bootstrap_servers=['localhost:9092'],
+            security_protocol="SSL",
+            max_poll_records=10,
+            auto_offset_reset='earliest',
+            session_timeout_ms=6000,
+            heartbeat_interval_ms=3000,
+            api_version=(0,11,5),
+        )
+        consumer.subscribe(topics=[TOPIC_NAME])'''
+        producer.send(
+            "confirmacao-pagamento",
+            key={"timestamp": id_venda},
+            value=request.json
+        )
+        producer.flush()
         return "", 200
     elif request.method == "PUT":
         venda = request.json
@@ -224,5 +248,20 @@ def venda(id_venda=None):
         session.commit()
         return "", 200
 
+@app.route('/confirmacao-pagamento/<id_venda>', methods=['POST'])
+def confirmacao_pagamento(id_venda=None):
+    consumer = KafkaConsumer(
+        client_id="client1",
+        group_id="venda-consumer",
+        bootstrap_servers=['localhost:9092'],
+        security_protocol="SSL",
+        max_poll_records=10,
+        auto_offset_reset='earliest',
+        session_timeout_ms=6000,
+        heartbeat_interval_ms=3000,
+        api_version=(0,11,5),
+    )
+    consumer.subscribe(topics=["confirmacao-pagamento"])
+    return "OK"
 
 app.run(host="0.0.0.0", port=8080)
